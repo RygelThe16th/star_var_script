@@ -367,7 +367,7 @@ APASS_CANDIDATES = 50
 # findcompstars looks the target up in SIMBAD and queries VizieR from inside
 # Siril, which waits on a dead CDS server for good: past this many seconds it
 # is stopped and FALLBACK A takes over.
-FINDCOMP_TIMEOUT = 120.0  # s
+FINDCOMP_TIMEOUT = catalog_sources.FINDCOMP_TIMEOUT  # s (config: findcomp_timeout)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1468,6 +1468,11 @@ def run_pipeline(config: dict,
         except Exception:
             pass
         _orig_on_done(ok, msg)
+
+    if catalog_sources.config_path().exists():
+        on_log(f"Settings: {catalog_sources.config_path()}")
+    for w in catalog_sources.CONFIG_WARNINGS:
+        on_log(f"Settings: {w}")
 
     # ── Report the resolved input directories ─────────────────────────────────
     if lights.is_dir():

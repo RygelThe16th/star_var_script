@@ -7,9 +7,14 @@ Each catalogue has a primary source (VizieR) and a fallback (the AAVSO APIs):
   comparison stars   VizieR II/336/apass9   →  AAVSO VSP  (app.aavso.org/vsp/api/chart/)
 
 A source is tried only when the previous one times out or fails; an empty but
-valid answer is kept. Answers are cached (see CACHE_DIR) and reused for any
-query they cover, so a field queried once also works offline. No Siril
-dependency: it can be tried from a terminal (python3 catalog_sources.py RA DEC).
+valid answer is kept. VizieR is asked at each of VIZIER_MIRRORS in turn.
+Answers are cached (see CACHE_DIR) and reused for any query they cover, so a
+field queried once also works offline. No Siril dependency: it can be tried
+from a terminal (python3 catalog_sources.py RA DEC).
+
+Mirrors, source order, timeouts and cache age can be set in a JSON file,
+$XDG_CONFIG_HOME/star_var_script/config.json (see config.example.json);
+without it the defaults below apply.
 
 AAVSO API references:
   VSX  https://archive.aavso.org/apis-aavso-resources  (api.list: ra, dec,
@@ -34,7 +39,12 @@ try:
 except ImportError:
     HAS_REQUESTS = False
 
-VIZIER_URL    = "https://vizier.cds.unistra.fr/viz-bin/asu-tsv"
+# VizieR servers, tried in this order; the same CGI path on each.
+VIZIER_MIRRORS: list[str] = ["https://vizier.cds.unistra.fr",
+                             "https://vizier.cfa.harvard.edu",
+                             "https://vizier.nao.ac.jp"]
+VIZIER_PATH   = "/viz-bin/asu-tsv"
+VIZIER_URL    = VIZIER_MIRRORS[0] + VIZIER_PATH
 # www.aavso.org/vsx is behind a Cloudflare browser check; vsx.aavso.org serves
 # the same API without it.
 AAVSO_VSX_URL = "https://vsx.aavso.org/index.php"
@@ -42,7 +52,8 @@ AAVSO_VSP_URL = "https://app.aavso.org/vsp/api/chart/"
 
 # Order in which the sources are tried ("vizier", "aavso").
 SOURCE_ORDER: tuple[str, ...] = ("vizier", "aavso")
-TIMEOUT = 20          # s, per request
+TIMEOUT_CONNECT = 5.0   # s, to connect (a dead server fails fast)
+TIMEOUT_READ    = 20.0  # s, for the answer once connected
 # A source that timed out or failed is skipped for this long, so that one
 # pipeline run does not wait for the same dead server at every query.
 RETRY_AFTER = 600     # s
@@ -73,6 +84,99 @@ CACHE_DIR: Optional[Path] = None
 CACHE_MAX_AGE_DAYS = 30.0
 _CACHE_VERSION = 1
 
+# Siril's findcompstars (pipeline step 5) is stopped past this many seconds.
+FINDCOMP_TIMEOUT = 120.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Settings file
+# ─────────────────────────────────────────────────────────────────────────────
+
+def config_path() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "star_var_script" / "config.json"
+
+
+def _number(v, lo: float, hi: float) -> Optional[float]:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v) if lo <= v <= hi else None
+
+
+def load_config(path: Optional[Path] = None) -> tuple[dict, list[str]]:
+    """Settings of the config file, and warnings for what was ignored.
+
+    Returns ({module global: value} for the valid entries, [warning]). A
+    missing file gives ({}, []); an unreadable one or a bad entry is
+    reported and left out, so that the defaults apply instead.
+    """
+    path = path or config_path()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, []
+    except (OSError, ValueError) as e:
+        return {}, [f"{path}: not read ({e}) — defaults used"]
+    if not isinstance(raw, dict):
+        return {}, [f"{path}: not a JSON object — defaults used"]
+
+    out: dict = {}
+    warn: list[str] = []
+    for key, v in raw.items():
+        bad = f"{path}: {key} = {v!r} ignored"
+        if key.startswith("_"):            # comments
+            continue
+        if key == "vizier_mirrors":
+            ok = (isinstance(v, list) and v
+                  and all(isinstance(m, str) and m.startswith(("http://", "https://"))
+                          for m in v))
+            if ok:
+                out["VIZIER_MIRRORS"] = [m.strip().rstrip("/") for m in v]
+            else:
+                warn.append(bad + " (a list of http(s):// server URLs)")
+        elif key == "source_order":
+            ok = (isinstance(v, list) and v and len(set(v)) == len(v)
+                  and all(s in ("vizier", "aavso") for s in v))
+            if ok:
+                out["SOURCE_ORDER"] = tuple(v)
+            else:
+                warn.append(bad + ' (a list of "vizier" and/or "aavso")')
+        elif key in ("timeout_connect", "timeout_read", "findcomp_timeout"):
+            n = _number(v, 0.5, 3600)
+            if n is None:
+                warn.append(bad + " (seconds, 0.5 to 3600)")
+            else:
+                out[key.upper()] = n
+        elif key == "retry_after_minutes":
+            n = _number(v, 0, 1440)
+            if n is None:
+                warn.append(bad + " (minutes, 0 to 1440)")
+            else:
+                out["RETRY_AFTER"] = n * 60
+        elif key == "cache_max_age_days":
+            n = _number(v, 0, 3650)
+            if n is None:
+                warn.append(bad + " (days, 0 to 3650)")
+            else:
+                out["CACHE_MAX_AGE_DAYS"] = n
+        else:
+            warn.append(f"{path}: unknown setting {key!r} ignored")
+    return out, warn
+
+
+def apply_config(path: Optional[Path] = None) -> list[str]:
+    """Load the config file into this module's settings; returns warnings."""
+    global VIZIER_URL
+    settings, warnings = load_config(path)
+    globals().update(settings)
+    VIZIER_URL = VIZIER_MIRRORS[0] + VIZIER_PATH
+    return warnings
+
+
+# Read once on import; CONFIG_WARNINGS is logged by the pipeline.
+CONFIG_WARNINGS: list[str] = apply_config()
+
+
 class CatalogError(Exception):
     """A source did not answer, or answered something unreadable."""
 
@@ -94,10 +198,13 @@ def _get(url: str, params: dict) -> "requests.Response":
     if not HAS_REQUESTS:
         raise CatalogError("the requests module is not available")
     try:
-        r = requests.get(url, params=params, timeout=TIMEOUT)
+        r = requests.get(url, params=params,
+                         timeout=(TIMEOUT_CONNECT, TIMEOUT_READ))
         r.raise_for_status()
+    except requests.ConnectTimeout:
+        raise CatalogError(f"no connection within {TIMEOUT_CONNECT:g} s") from None
     except requests.Timeout:
-        raise CatalogError(f"no answer within {TIMEOUT} s") from None
+        raise CatalogError(f"no answer within {TIMEOUT_READ:g} s") from None
     except requests.HTTPError as e:
         raise CatalogError(f"HTTP {e.response.status_code}") from None
     except requests.RequestException as e:
@@ -134,6 +241,39 @@ def _sexa_to_deg(text: str, hours: bool) -> float:
 # VizieR
 # ─────────────────────────────────────────────────────────────────────────────
 
+# The mirror that answered the last VizieR query (host name), for the log.
+last_vizier_host: Optional[str] = None
+
+
+def _host(url: str) -> str:
+    return url.split("://", 1)[-1].split("/", 1)[0]
+
+
+def _vizier_get(params: dict) -> "requests.Response":
+    """GET at the first VIZIER_MIRRORS that answers; CatalogError if none.
+
+    A mirror that failed is skipped for RETRY_AFTER, like a source.
+    """
+    global last_vizier_host
+    errors = []
+    for base in VIZIER_MIRRORS:
+        host = _host(base)
+        key = "vizier@" + host
+        if source_down(key):
+            errors.append(f"{host}: skipped")
+            continue
+        try:
+            r = _get(base + VIZIER_PATH, params)
+        except CatalogError as e:
+            _failed_at[key] = time.monotonic()
+            errors.append(f"{host}: {e}")
+            continue
+        _failed_at.pop(key, None)
+        last_vizier_host = host
+        return r
+    raise CatalogError("; ".join(errors) or "no VizieR mirror set")
+
+
 def vizier_tsv(catalog: str, ra: float, dec: float,
                radius_arcmin: float, columns: list[str],
                filters: dict | None = None, max_rows: int = 500) -> list[list[str]]:
@@ -152,7 +292,7 @@ def vizier_tsv(catalog: str, ra: float, dec: float,
     }
     if filters:
         params.update(filters)
-    r = _get(VIZIER_URL, params)
+    r = _vizier_get(params)
     # TSV layout: #comments, column names, units, dashed separator, data.
     rows = []
     in_data = False
@@ -512,7 +652,8 @@ def _first_answer(kind: str, calls: dict[str, _Call],
             log(f"{name}: failed ({e})")
             continue
         _failed_at.pop(source, None)
-        log(f"{name}: {len(rows)} stars")
+        via = f" via {last_vizier_host}" if source == "vizier" and last_vizier_host else ""
+        log(f"{name}: {len(rows)} stars{via}")
         covered = _covered_radius(rows, ra, dec, radius_deg, call.cap)
         if call.max_radius is not None:
             covered = min(covered, call.max_radius)

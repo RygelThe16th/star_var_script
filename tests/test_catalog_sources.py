@@ -104,6 +104,10 @@ class _Base(unittest.TestCase):
         p = mock.patch.object(cs, "CACHE_DIR", self.cache)
         p.start()
         self.addCleanup(p.stop)
+        # One VizieR server, the one the canned answers are keyed by.
+        p = mock.patch.object(cs, "VIZIER_MIRRORS", [cs.VIZIER_URL.removesuffix(cs.VIZIER_PATH)])
+        p.start()
+        self.addCleanup(p.stop)
 
     def patch(self, get):
         p = mock.patch.object(cs.requests, "get", side_effect=get)
@@ -206,7 +210,7 @@ class TestFallback(_Base):
         comps, src = cs.fetch_comps(RA, DEC, 10.8, radius_deg=1.5, n=50, dvmag=3.5,
                                     on_log=self.log.append)
         self.assertEqual(src, "AAVSO VSP")
-        self.assertIn("VizieR APASS: failed (HTTP 503)", self.log)
+        self.assertIn("VizieR APASS: failed (vizier.cds.unistra.fr: HTTP 503)", self.log)
 
     def test_order_can_be_reversed(self):
         get, calls = _router(vsx=_resp(json_data=VSX_JSON))
