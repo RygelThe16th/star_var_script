@@ -1300,6 +1300,56 @@ def export_photometry_csv(dat: Path, out: Path, star_name: str,
     return rows_written
 
 
+PUB_PLOT_NAME = "light_curve_pub.png"
+
+
+def _missing_for_plot(e: ImportError, on_log: Callable[[str], None]) -> None:
+    on_log(f"Publication plot: skipped — {e.name or e} is not installed in "
+           "Siril's Python. Install it with: "
+           "~/.local/share/siril/venv/bin/python -m pip install matplotlib scipy")
+
+
+def generate_pub_plot(results_dir: Path,
+                      on_log: Callable[[str], None] = print) -> Optional[Path]:
+    """Three-panel plot of a result: apparent V, V-C and FWHM against JD.
+
+    Drawn by varstar_postprod/plot_lightcurve.py (5-min bins, 3σ clipping)
+    from photometry.csv and fwhm.csv, saved as PUB_PLOT_NAME in *results_dir*.
+    Returns its path, or None (with the reason logged) when it cannot be drawn.
+    """
+    csv_path = results_dir / "photometry.csv"
+    if not csv_path.exists():
+        on_log("Publication plot: skipped — no photometry.csv")
+        return None
+    try:
+        import sys as _s
+        postprod = str(Path(__file__).resolve().parent / "varstar_postprod")
+        if postprod not in _s.path:
+            _s.path.insert(0, postprod)
+        import plot_lightcurve as plc
+    except ImportError as e:
+        _missing_for_plot(e, on_log)
+        return None
+    try:
+        data = plc.load_photometry(csv_path)
+        if len(data["jd"]) < 2:
+            on_log("Publication plot: skipped — fewer than 2 points")
+            return None
+        fig = plc.plot_light_curve(data, bin_min=5.0, sigma=3.0)
+        out = plc.save_fig(fig, results_dir, Path(PUB_PLOT_NAME).stem, "png")[0]
+    except ImportError as e:  # scipy, imported while drawing the FWHM panel
+        _missing_for_plot(e, on_log)
+        return None
+    except Exception as e:   # a plot must never fail the run
+        on_log(f"Publication plot: not written ({type(e).__name__}: {e})")
+        return None
+    panels = "V, V-C" if data["has_vapp"] else "V-C"
+    if data["fwhm"] is not None:
+        panels += ", FWHM"
+    on_log(f"Publication plot: {panels} → {out.name}")
+    return out
+
+
 def generate_light_curve_plot(dat: Path, out: Path, star_name: str,
                                ensemble_vmag: Optional[float] = None) -> bool:
     """Generate a two-panel matplotlib light curve (differential + apparent if known).
@@ -1398,6 +1448,8 @@ def run_pipeline(config: dict,
       argos_selection (Optional[Path]) Argos photometry_selection.json: its
                                     comparison and check stars replace the
                                     automatic APASS ones when they fit the frame
+      pub_plot   (bool)             also write PUB_PLOT_NAME: apparent V, V-C
+                                    and FWHM against JD (needs matplotlib)
       equatorial (bool)             session shot in equatorial mode: no field
                                     rotation, so the target only has to be
                                     inside the frame, not the alt-az safe
@@ -1429,6 +1481,7 @@ def run_pipeline(config: dict,
     obscode    = config.get("obscode", "")
     argos_file = config.get("argos_selection")
     equatorial = bool(config.get("equatorial", False))
+    pub_plot   = bool(config.get("pub_plot", False))
     runner     = config["runner"]
 
     # ── Photometry (setphot) parameters — user-tunable ────────────────────────
@@ -2154,6 +2207,11 @@ def run_pipeline(config: dict,
             png = proc / "light_curve.png"
             if png.exists():
                 shutil.copy2(png, out_png)
+
+        if pub_plot:
+            generate_pub_plot(results_dir, on_log)
+        else:
+            (results_dir / PUB_PLOT_NAME).unlink(missing_ok=True)
 
         on_done(True, str(results_dir))
     else:

@@ -312,6 +312,19 @@ class App(tk.Tk):
                          if self.equatorial_var.get() else "alt-az — safe circle only")
             + " · re-query VSX to refresh the star list"))
 
+        # Optional three-panel plot (apparent V, V-C, FWHM) from
+        # varstar_postprod/plot_lightcurve.py; needs matplotlib in Siril's Python.
+        plot_row = self._row(obs_card)
+        plot_row.pack(fill="x", pady=(4, 0))
+        tk.Label(plot_row, text="Plots:", bg=BG, fg=FG2,
+                 font=("Helvetica", 11), width=9, anchor="w").pack(side="left")
+        self.pub_plot_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(plot_row, text="V / V−C / FWHM plot (light_curve_pub.png)",
+                       variable=self.pub_plot_var, bg=BG, fg=FG,
+                       activebackground=BG, activeforeground=FG,
+                       selectcolor=BG2, font=("Helvetica", 11),
+                       highlightthickness=0).pack(side="left")
+
         nstars_row = self._row(obs_card)
         nstars_row.pack(fill="x", pady=(4, 0))
         tk.Label(nstars_row, text="Comp stars:", bg=BG, fg=FG2,
@@ -890,6 +903,7 @@ class App(tk.Tk):
             "argos_selection": (Path(self.argos_var.get().strip())
                                 if self.argos_var.get().strip() else None),
             "equatorial": self.equatorial_var.get(),
+            "pub_plot": self.pub_plot_var.get(),
             "runner":     self.runner,
             "phot_aperture":  self.ap_var.get(),
             "phot_inner":     self.inner_var.get(),
