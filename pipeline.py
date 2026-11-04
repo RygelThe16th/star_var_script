@@ -622,6 +622,37 @@ def _separation_arcsec(ra1: float, dec1: float, ra2: float, dec2: float) -> floa
     return math.hypot(dra, dec1 - dec2) * 3600.0
 
 
+def argos_target_in(sel: Optional[dict], stars: list[dict]
+                    ) -> tuple[Optional[str], Optional[dict], float]:
+    """The star of *stars* that an Argos selection is for.
+
+    Returns (target name, star, separation ″): the star is the nearest one
+    within _SAME_STAR_ARCSEC of the selection's first target, or None (with
+    the separation of the nearest star, inf if none) when no star is that
+    close. The name is None when the selection has no usable target.
+    """
+    targets = (sel or {}).get("targets") or []
+    if not targets:
+        return None, None, math.inf
+    t = targets[0]
+    try:
+        ra, dec = float(t["ra_deg_j2000"]), float(t["dec_deg_j2000"])
+    except (KeyError, TypeError, ValueError):
+        return None, None, math.inf
+    name = str(t.get("name") or t.get("auid") or f"{ra:.5f} {dec:+.5f}")
+    best, best_sep = None, math.inf
+    for s in stars:
+        try:
+            sep = _separation_arcsec(ra, dec, float(s["ra"]), float(s["dec"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if sep < best_sep:
+            best, best_sep = s, sep
+    if best_sep > _SAME_STAR_ARCSEC:
+        return name, None, best_sep
+    return name, best, best_sep
+
+
 def argos_selection_stars(sel: dict, star: dict,
                           in_frame: Callable[[float, float], bool]
                           ) -> tuple[list[tuple[str, float, float, float]],
