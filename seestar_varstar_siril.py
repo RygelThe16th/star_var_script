@@ -44,6 +44,7 @@ from pipeline import (  # noqa: E402
     resolve_frame_dir,
     ARGOS_SELECTION_FILE,
     load_argos_selection,
+    PUB_PLOT_NAME,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -946,11 +947,14 @@ class App(tk.Tk):
             self._log(f"✓  {msg}")
             aavso = ("aavso.csv" if (Path(msg) / "aavso.csv").exists()
                      else "no aavso.csv (see log)")
+            # Written only when the option is on (removed otherwise).
+            pub = ("  ·  " + PUB_PLOT_NAME
+                   if (Path(msg) / PUB_PLOT_NAME).exists() else "")
             messagebox.showinfo("Done!",
                                 f"Results saved in:\n{msg}\n\n"
                                 f"Files: light_curve.dat  ·  {aavso}\n"
                                 "       photometry.csv  ·  light_curve.png\n"
-                                "       pipeline.log")
+                                f"       pipeline.log{pub}")
         else:
             self.lbl_prog.configure(text=f"Failed: {msg}", fg=RED)
             self._log(f"✗  {msg}")
