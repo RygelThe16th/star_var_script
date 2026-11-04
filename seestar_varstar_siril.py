@@ -791,7 +791,9 @@ class App(tk.Tk):
 
     def _fetch_vsx_bg(self):
         radius = max(SEESTAR["fov_w"], SEESTAR["fov_h"]) * 0.75
-        stars = query_vsx(self.field_ra, self.field_dec, radius, on_log=self._log)
+        # The button always asks the catalogues again (the cache is the fallback).
+        stars = query_vsx(self.field_ra, self.field_dec, radius, on_log=self._log,
+                          refresh=True)
         if not stars:
             self.after(0, lambda: (
                 self._log("VSX: no results — check connection with test_connections.py"),

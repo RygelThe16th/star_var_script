@@ -6,7 +6,11 @@ No network: requests.get is replaced by canned answers.
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import datetime
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import requests
@@ -94,6 +98,12 @@ class _Base(unittest.TestCase):
     def setUp(self):
         cs.reset_failures()
         self.log: list[str] = []
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cache = Path(tmp.name)
+        p = mock.patch.object(cs, "CACHE_DIR", self.cache)
+        p.start()
+        self.addCleanup(p.stop)
 
     def patch(self, get):
         p = mock.patch.object(cs.requests, "get", side_effect=get)
@@ -208,7 +218,7 @@ class TestFallback(_Base):
         get, _ = _router(vizier=requests.Timeout(), vsx=requests.Timeout())
         self.patch(get)
         self.assertEqual(cs.fetch_vsx(RA, DEC, 1, on_log=self.log.append), ([], None))
-        self.assertEqual(self.log[-1], "Catalogue: no source answered")
+        self.assertTrue(self.log[-1].startswith("Catalogue: no source answered"))
 
     def test_comps_filtered_and_sorted_like_apass(self):
         get, _ = _router(vizier=requests.Timeout(), vsp=_resp(json_data=VSP_JSON))
@@ -225,6 +235,112 @@ class TestFallback(_Base):
         # the star on the target is dropped, the rest sorted by |ΔV|
         self.assertEqual([c["vmag"] for c in comps], [11.3, 12.1])
         self.assertEqual({c["chart"] for c in comps}, {AAVSO_CHART})
+
+
+def _days_ago(days):
+    return datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+
+
+class TestCache(_Base):
+    def fetch_vsx_once(self):
+        get, calls = _router(vizier=requests.Timeout(), vsx=_resp(json_data=VSX_JSON))
+        self.patch(get)
+        cs.fetch_vsx(RA, DEC, 2.925)
+        return calls
+
+    def offline(self):
+        cs.reset_failures()
+        get, calls = _router(vizier=requests.Timeout(), vsx=requests.Timeout(),
+                             vsp=requests.Timeout())
+        cs.requests.get.side_effect = get
+        return calls
+
+    def test_answer_saved_with_its_query(self):
+        self.fetch_vsx_once()
+        files = list(self.cache.glob("vsx_aavso_*.json"))
+        self.assertEqual(len(files), 1)
+        e = json.loads(files[0].read_text())
+        self.assertEqual((e["kind"], e["source"], e["name"]), ("vsx", "aavso", "AAVSO VSX"))
+        self.assertEqual((e["ra"], e["dec"], e["radius_deg"], e["covered_deg"]),
+                         (RA, DEC, 2.925, 2.925))
+        self.assertEqual(len(e["rows"]), 4)
+        self.assertIn("fetched_utc", e)
+
+    def test_query_inside_the_cached_area_needs_no_network(self):
+        self.fetch_vsx_once()
+        calls = self.offline()
+        stars, src = cs.fetch_vsx(RA + 0.1, DEC, 1.0, on_log=self.log.append)
+        self.assertEqual(calls, [])
+        self.assertEqual(src, "AAVSO VSX")
+        self.assertEqual(stars[0]["name"], "V0873 Per")
+        self.assertIn("from the cache", self.log[-1])
+
+    def test_query_outside_the_cached_area_asks_the_sources(self):
+        self.fetch_vsx_once()
+        calls = self.offline()
+        self.assertEqual(cs.fetch_vsx(RA + 2.0, DEC, 2.0), ([], None))
+        self.assertEqual(calls, [cs.VIZIER_URL, cs.AAVSO_VSX_URL])
+
+    def test_capped_answer_covers_only_out_to_its_farthest_star(self):
+        with mock.patch.object(cs, "VSX_MAX_ROWS", 2):
+            self.fetch_vsx_once()
+            e = json.loads(next(self.cache.glob("vsx_*.json")).read_text())
+            self.assertLess(e["covered_deg"], 0.2)          # 2 nearest stars only
+            calls = self.offline()
+            self.assertEqual(cs.fetch_vsx(RA, DEC, 1.0)[1], None)
+            self.assertTrue(calls)
+            self.assertEqual(cs.fetch_vsx(RA, DEC, 0.05)[1], "AAVSO VSX")
+
+    def test_refresh_asks_again_and_falls_back_to_the_cache(self):
+        calls = self.fetch_vsx_once()
+        cs.reset_failures()
+        calls.clear()
+        cs.fetch_vsx(RA, DEC, 2.925, refresh=True)
+        self.assertEqual(calls, [cs.VIZIER_URL, cs.AAVSO_VSX_URL])
+        calls = self.offline()
+        stars, src = cs.fetch_vsx(RA, DEC, 2.925, refresh=True, on_log=self.log.append)
+        self.assertEqual(src, "AAVSO VSX")
+        self.assertIn("as no source answered", self.log[-1])
+
+    def test_old_cache_used_only_when_every_source_fails(self):
+        with mock.patch.object(cs, "_now", return_value=_days_ago(40)):
+            self.fetch_vsx_once()
+        calls = self.offline()
+        stars, src = cs.fetch_vsx(RA, DEC, 2.0, on_log=self.log.append)
+        self.assertEqual(calls, [cs.VIZIER_URL, cs.AAVSO_VSX_URL])   # asked first
+        self.assertEqual(src, "AAVSO VSX")
+        self.assertRegex(self.log[-1], r"as no source answered .*40 days old")
+
+    def test_apass_magnitude_range_must_be_covered(self):
+        get, _ = _router(vizier=_resp(text=APASS_TSV))
+        self.patch(get)
+        cs.fetch_comps(RA, DEC, 11.0, radius_deg=1.5, dvmag=2.0)   # 9.00..13.00
+        calls = self.offline()
+        comps, src = cs.fetch_comps(RA, DEC, 11.5, radius_deg=1.0, dvmag=1.0)
+        self.assertEqual((src, calls), ("VizieR APASS", []))
+        self.assertEqual([c["vmag"] for c in comps], [11.3, 12.1])
+        self.assertEqual(cs.fetch_comps(RA, DEC, 11.0, radius_deg=1.0, dvmag=3.5),
+                         ([], None))                                   # 7.5..14.5
+
+    def test_vsp_chart_reused_with_its_chart_id(self):
+        get, _ = _router(vizier=requests.Timeout(), vsp=_resp(json_data=VSP_JSON))
+        self.patch(get)
+        first, _ = cs.fetch_comps(RA, DEC, 11.0, radius_deg=1.5, n=50, dvmag=3.5)
+        calls = self.offline()
+        again, src = cs.fetch_comps(RA, DEC, 11.0, radius_deg=0.5, n=50, dvmag=3.5)
+        self.assertEqual((src, calls), ("AAVSO VSP", []))
+        self.assertEqual([c["auid"] for c in again], [c["auid"] for c in first])
+        self.assertEqual({c["chart"] for c in again}, {"X43364NGX"})
+        # fainter than the chart's maglimit (14.5) cannot come from it
+        self.assertEqual(cs.fetch_comps(RA, DEC, 12.0, radius_deg=0.5, dvmag=3.5),
+                         ([], None))
+
+    def test_unreadable_cache_files_are_ignored(self):
+        self.cache.mkdir(exist_ok=True)
+        (self.cache / "vsx_aavso_broken.json").write_text("{not json")
+        self.fetch_vsx_once()
+        self.offline()
+        self.assertEqual(cs.fetch_vsx(RA, DEC, 1.0)[1], "AAVSO VSX")
 
 
 class TestPipelineInterface(_Base):

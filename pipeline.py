@@ -320,16 +320,22 @@ def update_siril_catalogue(stars: list[dict], catalogue_path: Path) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def query_vsx(ra: float, dec: float, radius_deg: float,
-              on_log: Optional[Callable[[str], None]] = None) -> list[dict]:
-    """Variable stars from VizieR B/vsx/vsx, else from the AAVSO VSX API."""
-    return catalog_sources.fetch_vsx(ra, dec, radius_deg, on_log=on_log)[0]
+              on_log: Optional[Callable[[str], None]] = None,
+              refresh: bool = False) -> list[dict]:
+    """Variable stars from VizieR B/vsx/vsx, else from the AAVSO VSX API.
+
+    A cached answer covering the field is used unless *refresh*.
+    """
+    return catalog_sources.fetch_vsx(ra, dec, radius_deg, on_log=on_log,
+                                     refresh=refresh)[0]
 
 
 def query_apass(ra: float, dec: float, target_mag: float,
                 radius_deg: float = 1.0, n: int = 6,
                 dvmag: float = 2.0,
                 on_log: Optional[Callable[[str], None]] = None) -> list[dict]:
-    """Comparison stars from VizieR II/336/apass9, else from an AAVSO VSP chart.
+    """Comparison stars from VizieR II/336/apass9, else from an AAVSO VSP chart
+    (or from the catalogue cache when it covers the query).
 
     dvmag: max magnitude difference from target. Use 3.5+ when target_mag
     comes from VSX (which stores max brightness, often 1-2 mag brighter than mean).
