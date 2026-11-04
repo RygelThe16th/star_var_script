@@ -376,9 +376,38 @@ def _age_days(entry: dict) -> float:
     return (_now() - t).total_seconds() / 86400
 
 
+def _in_mag_range(r: dict, mag_lo: Optional[float], mag_hi: Optional[float]) -> bool:
+    v = r.get("vmag")
+    return v is None or ((mag_lo is None or v >= mag_lo)
+                         and (mag_hi is None or v <= mag_hi))
+
+
+def _covers(e: dict, ra: float, dec: float, radius_deg: float,
+            mag_lo: Optional[float], mag_hi: Optional[float],
+            cap: Optional[int]) -> bool:
+    """Whether the cached answer *e* holds everything this query returns.
+
+    It does when the query circle lies inside the area *e* is complete for.
+    A query capped to its *cap* nearest stars also needs only those: it is
+    answered when *cap* cached stars lie in the part of its circle inside
+    that area (the nearest *cap* overall are then among them) — e.g. the
+    same capped query again, whose own answer covers less than its radius.
+    """
+    safe = float(e["covered_deg"]) - _sep_deg(ra, dec, float(e["ra"]), float(e["dec"]))
+    if radius_deg <= safe + 1e-6:
+        return True
+    if cap is None or safe <= 0:
+        return False
+    reach = min(radius_deg, safe) + 1e-6
+    n = sum(1 for r in e["rows"]
+            if _sep_deg(ra, dec, r["ra"], r["dec"]) <= reach
+            and _in_mag_range(r, mag_lo, mag_hi))
+    return n >= cap
+
+
 def _cache_lookup(kind: str, order: Sequence[str], ra: float, dec: float,
                   radius_deg: float, mag_lo: Optional[float],
-                  mag_hi: Optional[float]) -> list[dict]:
+                  mag_hi: Optional[float], cap: Optional[int] = None) -> list[dict]:
     """Cached answers that cover the query: by source order, then newest first."""
     found = []
     try:
@@ -391,9 +420,6 @@ def _cache_lookup(kind: str, order: Sequence[str], ra: float, dec: float,
             if (e.get("version") != _CACHE_VERSION or e.get("kind") != kind
                     or e.get("source") not in order):
                 continue
-            if (_sep_deg(ra, dec, float(e["ra"]), float(e["dec"])) + radius_deg
-                    > float(e["covered_deg"]) + 1e-6):
-                continue
             if mag_lo is not None and e.get("mag_lo") is not None \
                     and float(e["mag_lo"]) > mag_lo + 1e-6:
                 continue
@@ -405,6 +431,8 @@ def _cache_lookup(kind: str, order: Sequence[str], ra: float, dec: float,
             if mag_hi is None and e.get("mag_hi") is not None:
                 continue
             if not isinstance(e.get("rows"), list):
+                continue
+            if not _covers(e, ra, dec, radius_deg, mag_lo, mag_hi, cap):
                 continue
         except (OSError, ValueError, KeyError, TypeError):
             continue
@@ -421,9 +449,7 @@ def _cached_rows(e: dict, ra: float, dec: float, radius_deg: float,
     for r in e["rows"]:
         if _sep_deg(ra, dec, r["ra"], r["dec"]) > radius_deg:
             continue
-        v = r.get("vmag")
-        if v is not None and ((mag_lo is not None and v < mag_lo)
-                              or (mag_hi is not None and v > mag_hi)):
+        if not _in_mag_range(r, mag_lo, mag_hi):
             continue
         rows.append(r)
     rows.sort(key=lambda r: _sep_deg(ra, dec, r["ra"], r["dec"]))
@@ -460,7 +486,7 @@ def _first_answer(kind: str, calls: dict[str, _Call],
         if s not in calls:
             log(f"Catalogue: unknown source '{s}' ignored")
     order = [s for s in (order or SOURCE_ORDER) if s in calls] or list(SOURCE_ORDER)
-    cached = _cache_lookup(kind, order, ra, dec, radius_deg, mag_lo, mag_hi)
+    cached = _cache_lookup(kind, order, ra, dec, radius_deg, mag_lo, mag_hi, cap)
 
     def from_cache(e: dict, why: str) -> tuple[list[dict], Optional[str]]:
         rows = _cached_rows(e, ra, dec, radius_deg, mag_lo, mag_hi, cap)
@@ -534,7 +560,7 @@ def fetch_comps(ra: float, dec: float, target_mag: float, *,
         "aavso":  _Call(lambda: aavso_vsp(ra, dec, target_mag, radius_deg, dvmag),
                         mag_hi=maglimit, max_radius=VSP_MAX_FOV / 120),
     }, order, on_log, ra=ra, dec=dec, radius_deg=radius_deg,
-        mag_lo=lo, mag_hi=hi, refresh=refresh)
+        mag_lo=lo, mag_hi=hi, cap=APASS_MAX_ROWS, refresh=refresh)
     comps = []
     for c in rows:
         if abs(c["vmag"] - target_mag) > dvmag:

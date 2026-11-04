@@ -287,9 +287,16 @@ class TestCache(_Base):
             e = json.loads(next(self.cache.glob("vsx_*.json")).read_text())
             self.assertLess(e["covered_deg"], 0.2)          # 2 nearest stars only
             calls = self.offline()
-            self.assertEqual(cs.fetch_vsx(RA, DEC, 1.0)[1], None)
-            self.assertTrue(calls)
+            # The same capped query (the GUI's, every time) is answered: its
+            # 2 nearest stars are the cached ones, though they span < 2.925°.
+            stars, src = cs.fetch_vsx(RA, DEC, 2.925)
+            self.assertEqual((src, calls), ("AAVSO VSX", []))
+            self.assertEqual([s["name"] for s in stars],
+                             ["V0873 Per", "Gaia DR3 336795293651761408"])
             self.assertEqual(cs.fetch_vsx(RA, DEC, 0.05)[1], "AAVSO VSX")
+            # Moved off centre, only 1 cached star is surely among its nearest.
+            self.assertEqual(cs.fetch_vsx(RA + 0.05, DEC, 1.0)[1], None)
+            self.assertTrue(calls)
 
     def test_refresh_asks_again_and_falls_back_to_the_cache(self):
         calls = self.fetch_vsx_once()
