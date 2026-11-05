@@ -14,8 +14,8 @@ import requests
 import catalog_sources as cs
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.json"
-CDS, CFA, NAO = ("https://vizier.cds.unistra.fr", "https://vizier.cfa.harvard.edu",
-                 "https://vizier.nao.ac.jp")
+CDS, CFA, NAO, CHINA = ("https://vizier.cds.unistra.fr", "https://vizier.cfa.harvard.edu",
+                        "https://vizier.nao.ac.jp", "http://vizier.china-vo.org")
 
 VSX_TSV = """#
 Name\tType\tPeriod\tmax\tRAJ2000\tDEJ2000
@@ -41,7 +41,7 @@ class TestLoadConfig(unittest.TestCase):
     def test_example_file_is_valid(self):
         settings, warnings = cs.load_config(EXAMPLE)
         self.assertEqual(warnings, [])
-        self.assertEqual(settings["VIZIER_MIRRORS"], [CDS, CFA, NAO])
+        self.assertEqual(settings["VIZIER_MIRRORS"], [CDS, CFA, NAO, CHINA])
         self.assertEqual(settings["SOURCE_ORDER"], ("vizier", "aavso"))
         self.assertEqual((settings["TIMEOUT_CONNECT"], settings["TIMEOUT_READ"]), (5, 20))
         self.assertEqual(settings["RETRY_AFTER"], 600)

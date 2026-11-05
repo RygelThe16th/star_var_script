@@ -40,9 +40,12 @@ except ImportError:
     HAS_REQUESTS = False
 
 # VizieR servers, tried in this order; the same CGI path on each.
+# vizier.china-vo.org answers over HTTP only (its HTTPS port resets the
+# connection).
 VIZIER_MIRRORS: list[str] = ["https://vizier.cds.unistra.fr",
                              "https://vizier.cfa.harvard.edu",
-                             "https://vizier.nao.ac.jp"]
+                             "https://vizier.nao.ac.jp",
+                             "http://vizier.china-vo.org"]
 VIZIER_PATH   = "/viz-bin/asu-tsv"
 VIZIER_URL    = VIZIER_MIRRORS[0] + VIZIER_PATH
 # www.aavso.org/vsx is behind a Cloudflare browser check; vsx.aavso.org serves
