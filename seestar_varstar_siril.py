@@ -44,6 +44,7 @@ from pipeline import (  # noqa: E402
     resolve_frame_dir,
     ARGOS_SELECTION_FILE,
     load_argos_selection,
+    argos_target_in,
     PUB_PLOT_NAME,
 )
 
@@ -356,7 +357,8 @@ class App(tk.Tk):
         self.lbl_argos = tk.Label(obs_card, bg=BG, fg=FG2, font=("Helvetica", 10),
                                   anchor="w", justify="left")
         self.lbl_argos.pack(fill="x")
-        self.argos_var.trace_add("write", lambda *_: self._describe_argos())
+        self.argos_var.trace_add("write", lambda *_: (
+            self._describe_argos(), self._auto_select_argos_target()))
         self._describe_argos()
 
         phot_card = tk.LabelFrame(right, text=" Photometry (setphot) ",
@@ -597,6 +599,9 @@ class App(tk.Tk):
 
     def _load_session_bg(self):
         session = self.session_dir
+        # The Argos target is matched against this session's star list, not
+        # the one of the session shown before.
+        self.all_stars = []
 
         # An Argos session hands off the stars chosen during acquisition.
         selection = session / ARGOS_SELECTION_FILE
@@ -688,7 +693,8 @@ class App(tk.Tk):
             self._log("starsv.csv not found — click '↻ Query VSX catalog'")
 
         self.all_stars = stars
-        self.after(0, self._refresh_table)
+        self.after(0, lambda: (self._refresh_table(),
+                               self._auto_select_argos_target()))
 
         proc = session / "process"
         has_registered = any(
@@ -778,6 +784,38 @@ class App(tk.Tk):
         star = next((s for s in self.all_stars if str(id(s)) == sel[0]), None)
         if not star:
             return
+        self._select_star(star)
+
+    def _auto_select_argos_target(self):
+        """Select the target of the Argos selection in the star list.
+
+        Run when the Argos file changes and when the star list is (re)loaded,
+        not on filtering or sorting: a star picked by hand stays picked.
+        """
+        path = self.argos_var.get().strip()
+        if not path or not self.all_stars:
+            return
+        name, star, sep = argos_target_in(load_argos_selection(Path(path)),
+                                          self.all_stars)
+        if name is None:
+            return
+        if star is None:
+            self._log(f"Argos target {name} is not in the star list — "
+                      "query VSX or pick it by hand")
+            return
+        self._select_star(star)
+        iid = str(id(star))
+        if self.tree.exists(iid):
+            self.tree.selection_set(iid)
+            self.tree.see(iid)
+            self._log(f"Argos target: {star['name']} selected "
+                      f"({sep:.1f}\u2033 from the selection)")
+        else:
+            self._log(f"Argos target: {star['name']} selected "
+                      f"({sep:.1f}\u2033 from the selection) — hidden by the "
+                      "list filter or max mag")
+
+    def _select_star(self, star: dict):
         self.selected_star = star
         self.lbl_name.configure(text=star["name"])
         self.lbl_type.configure(
@@ -867,6 +905,7 @@ class App(tk.Tk):
             self._refresh_table(),
             self._log(f"VSX: {len(stars)} variable stars in field"),
             self._btn_state(True),
+            self._auto_select_argos_target(),
         ))
 
     # ── Pipeline ──────────────────────────────────────────────────────────────
