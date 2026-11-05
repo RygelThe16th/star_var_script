@@ -2,6 +2,24 @@
 
 Automated pipeline for variable star differential photometry with the **ZWO Seestar S30 Pro** (30 mm, f/5, Sony IMX585). Built on top of [Siril](https://siril.org) (open-source astronomical image processing) and driven entirely from its Script menu — no command line required.
 
+> **This is the `seestar-linux` branch of a fork** ([RygelThe16th/star_var_script](https://github.com/RygelThe16th/star_var_script)) of [jperret21/star_var_script](https://github.com/jperret21/star_var_script) v0.1.7, with the fixes below while they wait to be merged upstream. Once they are, use the original again.
+>
+> | Change | Upstream PR |
+> |---|---|
+> | Runs with the Siril **AppImage** on Linux (its bundled `siril-cli` is run through the AppImage) | [#3](https://github.com/jperret21/star_var_script/pull/3) |
+> | When **VizieR** (CDS) does not answer, variable stars come from the AAVSO VSX API and comparison stars from an AAVSO VSP chart; Siril's `findcompstars` (SIMBAD) no longer waits forever | [#4](https://github.com/jperret21/star_var_script/pull/4) |
+> | Catalogue answers are **cached** in `~/.cache/star_var_script/` and reused, also offline | not yet |
+> | **Settings file** for VizieR mirrors and timeouts; `test_connections.py` checks AAVSO and tells whether the fallback route works | not yet |
+> | Optional **V / V−C / FWHM plot** of a run (`light_curve_pub.png`) | not yet |
+> | The target of an Argos `photometry_selection.json` is **selected automatically** in the star list | not yet |
+>
+> **Install**
+> 1. On GitHub choose the `seestar-linux` branch, then *Code → Download ZIP* and unpack it (or `git clone -b seestar-linux https://github.com/RygelThe16th/star_var_script.git`).
+> 2. In Siril: *Preferences → Scripts*, add the unpacked folder to the script paths (replace the folder of the original, if any), then run `seestar_varstar_siril.py` from the Script menu.
+> 3. Only for the V / V−C / FWHM plot: install matplotlib and scipy into Siril's Python once — `~/.local/share/siril/venv/bin/python -m pip install matplotlib scipy` (Linux; the Siril AppImage ships without them).
+> 4. Optional: copy `config.example.json` to `~/.config/star_var_script/config.json` and keep only what you change (VizieR mirrors, source order, timeouts, cache age).
+> 5. If catalogues fail, run `python3 test_connections.py`: it ends with "normal route (VizieR)", "fallback route (AAVSO)" or "cached fields only".
+
 ---
 
 ## Features
