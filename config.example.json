@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy to ~/.config/star_var_script/config.json and keep only what you change. Keys starting with _ are ignored.",
+  "vizier_mirrors": ["https://vizier.cds.unistra.fr",
+                     "https://vizier.cfa.harvard.edu",
+                     "https://vizier.nao.ac.jp"],
+  "source_order": ["vizier", "aavso"],
+  "timeout_connect": 5,
+  "timeout_read": 20,
+  "retry_after_minutes": 10,
+  "cache_max_age_days": 30,
+  "findcomp_timeout": 120
+}
